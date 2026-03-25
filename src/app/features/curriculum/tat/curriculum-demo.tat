@@ -1,0 +1,119 @@
+studentNode = <{ id: "student", type: "learner", name: "Student" }>
+
+countingNode = <{ id: "counting", type: "lesson", name: "Counting" }>
+additionNode = <{ id: "addition", type: "lesson", name: "Addition" }>
+subtractionNode = <{ id: "subtraction", type: "lesson", name: "Subtraction" }>
+wordProblemsNode = <{ id: "wordProblems", type: "lesson", name: "Word Problems" }>
+
+startLessonNode = <{ id: "startLesson", type: "action", name: "Start Lesson" }>
+reviewLessonNode = <{ id: "reviewLesson", type: "action", name: "Review Lesson" }>
+completeLessonNode = <{ id: "completeLesson", type: "action", name: "Complete Lesson" }>
+
+startLesson := @action {
+  guard:
+    @query {
+      node: to
+      state: "available"
+      equals: true
+    }
+  pipeline:
+    -> @graft.branch(from, "starts", to)
+    -> @graft.meta(to, "status", inProgress)
+}
+
+reviewLesson := @action {
+  guard:
+    @query {
+      node: to
+      state: "completed"
+      equals: true
+    }
+  pipeline:
+    -> @graft.branch(from, "reviews", to)
+    -> @graft.meta(to, "status", reviewing)
+}
+
+completeLesson := @action {
+  guard:
+    @query {
+      node: to
+      state: "available"
+      equals: true
+    }
+  pipeline:
+    -> @graft.branch(from, "completes", to)
+    -> @graft.state(to, "completed", true)
+    -> @graft.meta(to, "status", mastered)
+}
+
+@seed:
+  nodes: [
+    studentNode,
+    countingNode,
+    additionNode,
+    subtractionNode,
+    wordProblemsNode,
+    startLessonNode,
+    reviewLessonNode,
+    completeLessonNode
+  ]
+  edges: [
+    [studentNode : "can" : startLessonNode],
+    [studentNode : "can" : reviewLessonNode],
+    [studentNode : "can" : completeLessonNode],
+
+    [studentNode : "targets" : countingNode],
+    [studentNode : "targets" : additionNode],
+    [studentNode : "targets" : subtractionNode],
+    [studentNode : "targets" : wordProblemsNode],
+
+    [countingNode : "unlocks" : additionNode],
+    [additionNode : "unlocks" : subtractionNode],
+    [subtractionNode : "unlocks" : wordProblemsNode]
+  ]
+  state: {}
+  meta: {}
+  root: studentNode
+
+curriculum := @seed
+  -> @graft.state(countingNode, "available", true)
+  -> @graft.state(countingNode, "completed", true)
+  -> @graft.meta(countingNode, "status", mastered)
+
+  -> @graft.state(additionNode, "available", true)
+  -> @graft.state(additionNode, "completed", false)
+  -> @graft.meta(additionNode, "status", ready)
+
+  -> @graft.state(subtractionNode, "available", false)
+  -> @graft.state(subtractionNode, "completed", false)
+  -> @graft.meta(subtractionNode, "status", locked)
+
+  -> @graft.state(wordProblemsNode, "available", false)
+  -> @graft.state(wordProblemsNode, "completed", false)
+  -> @graft.meta(wordProblemsNode, "status", locked)
+
+curriculumGraph = curriculum <> @project(format: "graph")
+
+curriculumMenu = curriculum <> @project {
+  format: "menu"
+  focus: studentNode
+  include: [id, label, action, target, status]
+}
+
+curriculumTree = curriculum <> @project {
+  format: "tree"
+  focus: studentNode
+  include: [id, label, value, state, meta, children]
+}
+
+curriculumTrace = curriculum <> @project {
+  format: "trace"
+  focus: studentNode
+  include: [id, step, from, to, events, action, target, label, status, state, meta, raw]
+}
+
+curriculumTimeline = curriculum <> @project {
+  format: "timeline"
+  focus: studentNode
+  include: [id, step, from, events, action, target, label, status, state, meta, raw]
+}

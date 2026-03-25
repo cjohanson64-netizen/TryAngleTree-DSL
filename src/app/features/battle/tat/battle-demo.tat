@@ -1,0 +1,80 @@
+heroNode = <{ id: "hero", type: "character", name: "Hero" }>
+goblinNode = <{ id: "goblin", type: "enemy", name: "Goblin" }>
+attackNode = <{ id: "attack", type: "action", name: "Attack" }>
+healNode = <{ id: "heal", type: "action", name: "Heal" }>
+wizardNode = <{ id: "wizard", type: "character", name: "Wizard" }>
+moveNode = <{ id: "move", type: "action", name: "Move" }>
+
+attack := @action {
+  guard:
+    @query {
+      node: to
+      state: "hp"
+    }
+  pipeline:
+    -> @graft.branch(from, "attacks", to)
+    -> @graft.state(to, "hp", 0)
+    -> @graft.meta(to, "status", defeated)
+}
+
+heal := @action {
+  guard:
+    @query {
+      node: to
+      state: "hp"
+    }
+  pipeline:
+    -> @graft.branch(from, "heals", to)
+    -> @graft.state(to, "hp", 12)
+}
+
+move := @action {
+  pipeline:
+    -> @graft.branch(from, "moves", to)
+}
+
+@seed:
+  nodes: [heroNode, wizardNode, goblinNode, attackNode, healNode, moveNode]
+  edges: [
+    [heroNode : "can" : attackNode],
+    [wizardNode : "can" : attackNode],
+    [heroNode : "can" : healNode],
+    [heroNode : "can" : moveNode],
+    [heroNode : "targets" : goblinNode],
+    [heroNode : "targets" : heroNode],
+    [wizardNode : "targets" : goblinNode]
+  ]
+  state: {}
+  meta: {}
+  root: heroNode
+
+battle := @seed
+  -> @graft.state(heroNode, "hp", 10)
+  -> @graft.state(goblinNode, "hp", 3)
+  -> @graft.state(wizardNode, "hp", 10)
+
+battleGraph = battle <> @project(format: "graph")
+
+battleMenu = battle <> @project {
+  format: "menu"
+  focus: heroNode
+  include: [id, label, action, target, status]
+}
+
+battleTree = battle <> @project {
+  format: "tree"
+  focus: heroNode
+  include: [id, label, value, state, meta, children]
+}
+
+battleTrace = battle <> @project {
+  format: "trace"
+  focus: heroNode
+  include: [id, step, from, to, events, action, target, label, status, state, meta, raw]
+}
+
+battleTimeline = battle <> @project {
+  format: "timeline"
+  focus: heroNode
+  include: [id, step, from, events, action, target, label, status, state, meta, raw]
+}
