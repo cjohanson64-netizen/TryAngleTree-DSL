@@ -161,7 +161,7 @@ test("detail projection returns one node contract", () => {
 {
   format: "detail"
   focus: hero
-  include: [id, label, type, state, meta, actions, status]
+  include: [id, label, type, state, meta, value, actions, relationships, status]
 }
 `),
   );
@@ -171,7 +171,60 @@ test("detail projection returns one node contract", () => {
   assert.equal(projection.focus.id, "hero");
   assert.equal(projection.node.label, "Hero");
   assert.equal(projection.node.status, "active");
-  assert.deepEqual(projection.node.actions, [{ id: "attackActionNode", label: "Attack" }, { id: "talkActionNode", label: "Talk" }]);
+  assert.deepEqual(projection.node.value, { name: "Hero", type: "character" });
+  assert.deepEqual(projection.node.relationships, [
+    { relation: "targets", target: "goblin" },
+    { relation: "targets", target: "ally" },
+    { relation: "can", target: "attackActionNode" },
+    { relation: "can", target: "talkActionNode" },
+  ]);
+  assert.deepEqual(projection.node.actions, [
+    {
+      id: "attack",
+      label: "Attack",
+      value: { name: "Attack", type: "action", binding: "attack" },
+      state: {},
+      meta: {},
+      status: "ready",
+    },
+    {
+      id: "talk",
+      label: "Talk",
+      value: { name: "Talk", type: "action", binding: "talk" },
+      state: {},
+      meta: {},
+      status: "ready",
+    },
+  ]);
+});
+
+test("summary projection keeps focus semantics and exposes aggregate counts", () => {
+  const result = executeTat(
+    projectionFixture(`
+{
+  format: "summary"
+  focus: hero
+  include: [id, label, status, value, state, meta, actions, counts]
+}
+`),
+  );
+
+  const projection = result.execution.state.projections.get("world") as any;
+  assert.equal(projection.format, "summary");
+  assert.equal(projection.focus.id, "hero");
+  assert.equal(projection.data.id, "hero");
+  assert.equal(projection.data.label, "Hero");
+  assert.equal(projection.data.status, "active");
+  assert.deepEqual(projection.data.value, { name: "Hero", type: "character" });
+  assert.deepEqual(projection.data.actions.map((action: any) => action.id), ["attack", "talk"]);
+  assert.deepEqual(projection.data.counts, {
+    nodes: 12,
+    edges: 10,
+    statuses: {
+      active: 1,
+      defeated: 1,
+    },
+  });
 });
 
 // Guard-aware: only pairs where the action guard passes for the given target.
@@ -236,6 +289,48 @@ test("menu projection action record uses binding name for id", () => {
   const attackItem = projection.items.find((item: any) => item.action.id === "attack");
   assert.equal(attackItem.action.label, "Attack");
   assert.equal(attackItem.action.value.name, "Attack");
+});
+
+test("menu projection prefers explicit actionKey over naming heuristics", () => {
+  const result = executeTat(`
+heroValue = <{ name: "Hero", type: "character" }>
+goblinValue = <{ name: "Goblin", type: "enemy" }>
+attackActionValue = <{ name: "Attack", type: "action", actionKey: "strike" }>
+
+hero = <heroValue>
+goblin = <goblinValue>
+attackActionNode = <attackActionValue>
+
+strike := @action {
+  guard: true
+  pipeline:
+    -> @graft.meta(to, "status", "hit")
+}
+
+@seed:
+  nodes: [hero, goblin, attackActionNode]
+  edges: [
+    [hero : "can" : attackActionNode],
+    [hero : "targets" : goblin]
+  ]
+  state: {}
+  meta: {}
+  root: hero
+
+battle := @seed
+
+battleMenu = battle <> @project {
+  format: "menu"
+  focus: hero
+  include: [id, label, action, target, status]
+}
+`);
+
+  const projection = result.execution.state.projections.get("battleMenu") as any;
+  assert.equal(projection.items.length, 1);
+  assert.equal(projection.items[0].action.id, "strike");
+  assert.equal(projection.items[0].id, "hero.strike.goblin");
+  assert.equal(projection.items[0].action.value.actionKey, "strike");
 });
 
 test("menu projection target record uses node id and derived label", () => {

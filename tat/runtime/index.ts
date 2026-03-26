@@ -2,7 +2,17 @@ import type { ProgramNode } from "../ast/nodeTypes";
 import { printAST } from "../ast/printAST";
 import { tokenize, type Token } from "../lexer/tokenize";
 import { parse, ParseError } from "../parser/parse";
-import { executeProgram, type ExecuteProgramResult } from "./executeProgram";
+import {
+  applyRuntimeAction,
+  executeProgram,
+  reprojectRuntimeState,
+  setRuntimeFocus,
+  type ExecuteProgramResult,
+  type RuntimeApplyActionRequest,
+  type RuntimeFocusRequest,
+  type RuntimeProjectionOptions,
+  type RuntimeState,
+} from "./executeProgram";
 import { graphToDebugObject } from "./graph";
 import { validateProgram, type ValidationIssue } from "./validateProgram";
 import { executeTatModule as executeTatModuleInternal } from "./executeModule";
@@ -39,6 +49,11 @@ export interface TatExecuteResult extends TatParseResult {
   };
 }
 
+export interface TatRuntimeSession extends TatParseResult {
+  validation: ValidationIssue[];
+  state: RuntimeState;
+}
+
 export function tokenizeTat(source: string): Token[] {
   return tokenize(source);
 }
@@ -68,6 +83,11 @@ export function parseTat(source: string): TatParseResult {
 }
 
 export function executeTat(source: string): TatExecuteResult {
+  const session = createTatRuntimeSession(source);
+  return inspectTatRuntimeSession(session);
+}
+
+export function createTatRuntimeSession(source: string): TatRuntimeSession {
   const parsed = parseTat(source);
   const validation = validateProgram(parsed.ast);
 
@@ -87,32 +107,46 @@ export function executeTat(source: string): TatExecuteResult {
 
   const execution = executeProgram(parsed.ast);
 
+  return {
+    ...parsed,
+    validation,
+    state: execution.state,
+  };
+}
+
+export function inspectTatRuntimeSession(
+  session: TatRuntimeSession,
+  options?: RuntimeProjectionOptions,
+): TatExecuteResult {
+  const projections = reprojectRuntimeState(session.ast, session.state, options);
+  const execution = { state: session.state };
+
   const graphs: Record<string, ReturnType<typeof graphToDebugObject>> = {};
-  for (const [name, graph] of execution.state.graphs.entries()) {
+  for (const [name, graph] of session.state.graphs.entries()) {
     graphs[name] = graphToDebugObject(graph);
   }
 
-  const projections: Record<string, unknown> = {};
-  for (const [name, projection] of execution.state.projections.entries()) {
-    projections[name] = structuredCloneSafe(projection);
+  const projectionDebug: Record<string, unknown> = {};
+  for (const [name, projection] of projections.entries()) {
+    projectionDebug[name] = structuredCloneSafe(projection);
   }
 
   const graphInteractions: Record<string, GraphInteraction> = {};
-  for (const [name, interaction] of execution.state.graphInteractions.entries()) {
+  for (const [name, interaction] of session.state.graphInteractions.entries()) {
     graphInteractions[name] = structuredCloneSafe(interaction);
   }
 
   const interactionHistory = structuredCloneSafe(
-    execution.state.interactionHistory,
+    session.state.interactionHistory,
   );
 
   const values: Record<string, unknown> = {};
-  for (const [name, value] of execution.state.bindings.values.entries()) {
+  for (const [name, value] of session.state.bindings.values.entries()) {
     values[name] = structuredCloneSafe(value);
   }
 
   const nodes: Record<string, ReturnType<typeof graphToDebugObject>["nodes"][number]> = {};
-  for (const [name, node] of execution.state.bindings.nodes.entries()) {
+  for (const [name, node] of session.state.bindings.nodes.entries()) {
     nodes[name] = {
       id: node.id,
       value: structuredCloneSafe(node.value),
@@ -122,21 +156,41 @@ export function executeTat(source: string): TatExecuteResult {
   }
 
   return {
-    ...parsed,
-    validation,
+    ...session,
     execution,
     debug: {
       graphs,
-      projections,
+      projections: projectionDebug,
       graphInteractions,
       interactionHistory,
-      systemRelations: execution.state.systemRelations,
-      queryResults: execution.state.queryResults,
+      systemRelations: session.state.systemRelations,
+      queryResults: session.state.queryResults,
       bindings: {
         values,
         nodes,
       },
     },
+  };
+}
+
+export function applyTatAction(
+  session: TatRuntimeSession,
+  request: RuntimeApplyActionRequest,
+  options?: RuntimeProjectionOptions,
+): TatRuntimeSession {
+  return {
+    ...session,
+    state: applyRuntimeAction(session.ast, session.state, request, options),
+  };
+}
+
+export function setTatFocus(
+  session: TatRuntimeSession,
+  request: RuntimeFocusRequest,
+): TatRuntimeSession {
+  return {
+    ...session,
+    state: setRuntimeFocus(session.ast, session.state, request),
   };
 }
 
@@ -167,4 +221,8 @@ export type {
   GraphInteractionHistoryEntry,
   GraphWorkspace,
   InteractionLogEntry,
+  RuntimeApplyActionRequest,
+  RuntimeFocusRequest,
+  RuntimeProjectionOptions,
+  RuntimeState,
 };

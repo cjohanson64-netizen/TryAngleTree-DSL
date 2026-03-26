@@ -11,6 +11,8 @@ import {
   featureOptions,
   defaultFeatureId,
 } from "./registry/featureRegistry";
+
+import Logo from "../assets/TAT Logo.svg";
 import "./styles/playground.css";
 
 export default function PlaygroundPage() {
@@ -25,36 +27,28 @@ export default function PlaygroundPage() {
     feature.getInitialSelectedNodeId(feature.initialSource),
   );
 
-  const { projections, executionResult } = useTatPlayground(
+  const { projections, executionResult, interact, setFocus } = useTatPlayground(
     sourceCode,
     feature.projectionBindings,
   );
 
-  const displayProjections = useMemo(
-    () =>
-      feature.deriveProjections({
-        sourceCode,
-        draftSource,
-        selectedNodeId,
-        projections,
-        executionResult,
-      }),
-    [
-      feature,
-      sourceCode,
-      draftSource,
-      selectedNodeId,
-      projections,
-      executionResult,
-    ],
-  );
-
   const activeData = useMemo(
-    () => displayProjections[activeProjection] ?? null,
-    [displayProjections, activeProjection],
+    () => projections[activeProjection] ?? null,
+    [projections, activeProjection],
   );
 
   function commitFeatureUpdate(update) {
+    if (update?.runtimeAction) {
+      interact(update.runtimeAction);
+    }
+
+    if (
+      update?.nextSelectedNodeId &&
+      !Object.prototype.hasOwnProperty.call(update, "nextSourceCode")
+    ) {
+      setFocus(feature.graphBinding, update.nextSelectedNodeId);
+    }
+
     applyFeatureUpdate(
       {
         setSourceCode,
@@ -109,7 +103,7 @@ export default function PlaygroundPage() {
         sourceCode,
         draftSource,
         selectedNodeId,
-        projections: displayProjections,
+        projections,
       }),
     );
   }
@@ -120,7 +114,7 @@ export default function PlaygroundPage() {
         sourceCode,
         draftSource,
         selectedNodeId,
-        projections: displayProjections,
+        projections,
       }),
     );
   }
@@ -132,7 +126,7 @@ export default function PlaygroundPage() {
           sourceCode,
           draftSource,
           selectedNodeId,
-          projections: displayProjections,
+          projections,
         },
         nodeId,
       ),
@@ -146,7 +140,7 @@ export default function PlaygroundPage() {
           sourceCode,
           draftSource,
           selectedNodeId,
-          projections: displayProjections,
+          projections,
         },
         item,
       ),
@@ -156,8 +150,13 @@ export default function PlaygroundPage() {
   return (
     <main className="playground-page">
       <header className="playground-header">
-        <h1 className="playground-title">TAT Projection Playground</h1>
-        <p className="playground-subtitle">{feature.label}</p>
+        <div className="playground-brand">
+          <img src={Logo} alt="TAT Logo" className="tat-logo" />
+          <div>
+            <h1 className="playground-title">TAT Projection Playground</h1>
+            <p className="playground-subtitle">{feature.label}</p>
+          </div>
+        </div>
 
         <section className="playground-toolbar">
           <FeatureSelect

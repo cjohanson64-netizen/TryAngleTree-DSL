@@ -9,6 +9,11 @@ body {
   color: #f5f7fb;
 }
 
+.tat-logo {
+  width: 100px;
+  border-radius: 50%;
+}
+
 .playground-page {
   min-height: 100vh;
   padding: 24px;
@@ -16,6 +21,13 @@ body {
 
 .playground-header {
   margin-bottom: 20px;
+}
+
+.playground-brand {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 10px;
+  align-items: center;
 }
 
 .playground-title {

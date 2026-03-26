@@ -3,7 +3,12 @@
 const { printAST } = require("./dist/ast/printAST");
 const { tokenize } = require("./dist/lexer/tokenize");
 const { parse, ParseError } = require("./dist/parser/parse");
-const { executeProgram } = require("./dist/runtime/executeProgram");
+const {
+  applyRuntimeAction,
+  executeProgram,
+  reprojectRuntimeState,
+  setRuntimeFocus,
+} = require("./dist/runtime/executeProgram");
 const { graphToDebugObject } = require("./dist/runtime/graph");
 const { validateProgram } = require("./dist/runtime/validateProgram");
 
@@ -33,6 +38,10 @@ function parseTat(source) {
 }
 
 function executeTat(source) {
+  return inspectTatRuntimeSession(createTatRuntimeSession(source));
+}
+
+function createTatRuntimeSession(source) {
   const parsed = parseTat(source);
   const validation = validateProgram(parsed.ast);
   const errors = validation.filter((issue) => issue.severity === "error");
@@ -50,31 +59,42 @@ function executeTat(source) {
   }
 
   const execution = executeProgram(parsed.ast);
+
+  return {
+    ...parsed,
+    validation,
+    state: execution.state,
+  };
+}
+
+function inspectTatRuntimeSession(session, options) {
+  const execution = { state: session.state };
+  const currentProjections = reprojectRuntimeState(session.ast, session.state, options);
   const graphs = {};
 
-  for (const [name, graph] of execution.state.graphs.entries()) {
+  for (const [name, graph] of session.state.graphs.entries()) {
     graphs[name] = graphToDebugObject(graph);
   }
 
   const projections = {};
-  for (const [name, projection] of execution.state.projections.entries()) {
+  for (const [name, projection] of currentProjections.entries()) {
     projections[name] = structuredCloneSafe(projection);
   }
 
   const graphInteractions = {};
-  for (const [name, interaction] of execution.state.graphInteractions.entries()) {
+  for (const [name, interaction] of session.state.graphInteractions.entries()) {
     graphInteractions[name] = structuredCloneSafe(interaction);
   }
 
-  const interactionHistory = structuredCloneSafe(execution.state.interactionHistory);
+  const interactionHistory = structuredCloneSafe(session.state.interactionHistory);
   const values = {};
 
-  for (const [name, value] of execution.state.bindings.values.entries()) {
+  for (const [name, value] of session.state.bindings.values.entries()) {
     values[name] = structuredCloneSafe(value);
   }
 
   const nodes = {};
-  for (const [name, node] of execution.state.bindings.nodes.entries()) {
+  for (const [name, node] of session.state.bindings.nodes.entries()) {
     nodes[name] = {
       id: node.id,
       value: structuredCloneSafe(node.value),
@@ -84,21 +104,34 @@ function executeTat(source) {
   }
 
   return {
-    ...parsed,
-    validation,
+    ...session,
     execution,
     debug: {
       graphs,
       projections,
       graphInteractions,
       interactionHistory,
-      systemRelations: execution.state.systemRelations,
-      queryResults: execution.state.queryResults,
+      systemRelations: session.state.systemRelations,
+      queryResults: session.state.queryResults,
       bindings: {
         values,
         nodes,
       },
     },
+  };
+}
+
+function applyTatAction(session, request, options) {
+  return {
+    ...session,
+    state: applyRuntimeAction(session.ast, session.state, request, options),
+  };
+}
+
+function setTatFocus(session, request) {
+  return {
+    ...session,
+    state: setRuntimeFocus(session.ast, session.state, request),
   };
 }
 
@@ -116,6 +149,10 @@ module.exports = {
   printTatAst,
   parseTat,
   executeTat,
+  createTatRuntimeSession,
+  inspectTatRuntimeSession,
+  applyTatAction,
+  setTatFocus,
   ParseError,
   tokenize,
   parse,

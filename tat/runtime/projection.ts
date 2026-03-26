@@ -44,6 +44,7 @@ export const PROJECT_INCLUDE_KEYS = [
   "target",
   "event",
   "status",
+  "counts",
 ] as const;
 
 export type ProjectIncludeKey = (typeof PROJECT_INCLUDE_KEYS)[number];
@@ -74,7 +75,7 @@ export const PROJECT_FORMAT_RULES: Record<ProjectFormat, ProjectFormatRule> = {
   },
   list: {
     core: ["id", "label"],
-    allowed: ["type", "status", "state", "meta", "action", "target", "event"],
+    allowed: ["type", "status", "value", "state", "meta", "action", "target", "event"],
     contractKey: "items",
   },
   tree: {
@@ -119,7 +120,7 @@ export const PROJECT_FORMAT_RULES: Record<ProjectFormat, ProjectFormatRule> = {
   },
   summary: {
     core: ["label", "status"],
-    allowed: ["id", "state", "meta", "actions"],
+    allowed: ["id", "value", "state", "meta", "actions", "counts"],
     contractKey: "data",
   },
 };
@@ -181,11 +182,7 @@ export function projectGraphResult(
     case "graph":
       return projectGraphFormat(context, spec);
     case "detail":
-      return {
-        format: "detail",
-        focus: projectNodeReference(getNode(graph, spec.focus)),
-        node: selectNodeFields(getNode(graph, spec.focus), spec.include, context),
-      };
+      return projectDetailFormat(context, spec);
     case "menu":
       return {
         format: "menu",
@@ -195,15 +192,7 @@ export function projectGraphResult(
         ),
       };
     case "list":
-      return {
-        format: "list",
-        focus: projectNodeReference(getNode(graph, spec.focus)),
-        items: getOutgoingEdges(graph, spec.focus)
-          .filter((edge) => edge.kind === "branch" && edge.relation === "contains")
-          .map((edge, index) =>
-            selectListFields(getNode(graph, edge.object), spec.include, context, index),
-          ),
-      };
+      return projectListFormat(context, spec);
     case "tree":
       return {
         format: "tree",
@@ -227,11 +216,7 @@ export function projectGraphResult(
         ),
       };
     case "summary":
-      return {
-        format: "summary",
-        focus: projectNodeReference(getNode(graph, spec.focus)),
-        data: selectSummaryFields(getNode(graph, spec.focus), spec.include, context),
-      };
+      return projectSummaryFormat(context, spec);
   }
 }
 
@@ -427,6 +412,61 @@ function projectGraphFormat(
   };
 }
 
+function projectDetailFormat(
+  context: ProjectFieldContext,
+  spec: ProjectSpec,
+): {
+  format: "detail";
+  focus: Record<string, GraphValue>;
+  node: Record<string, GraphValue>;
+} {
+  const focusNode = resolveFocusNode(context.graph, spec.focus);
+
+  return {
+    format: "detail",
+    focus: projectNodeReference(focusNode),
+    node: selectNodeFields(focusNode, spec.include, context),
+  };
+}
+
+function projectListFormat(
+  context: ProjectFieldContext,
+  spec: ProjectSpec,
+): {
+  format: "list";
+  focus: Record<string, GraphValue>;
+  items: Array<Record<string, GraphValue>>;
+} {
+  return {
+    format: "list",
+    focus: projectNodeReference(resolveFocusNode(context.graph, spec.focus)),
+    items: getPreferredListEdges(context.graph, spec.focus).map((edge, index) =>
+      selectListFields(getNode(context.graph, edge.object), spec.include, context, index),
+    ),
+  };
+}
+
+function projectSummaryFormat(
+  context: ProjectFieldContext,
+  spec: ProjectSpec,
+): {
+  format: "summary";
+  focus: Record<string, GraphValue>;
+  data: Record<string, GraphValue>;
+} {
+  const focusNode = resolveFocusNode(context.graph, spec.focus);
+
+  return {
+    format: "summary",
+    focus: projectNodeReference(focusNode),
+    data: selectSummaryFields(focusNode, spec.include, context),
+  };
+}
+
+function resolveFocusNode(graph: Graph, focus: string): GraphNode {
+  return getNode(graph, focus);
+}
+
 function selectNodeFields(
   node: GraphNode,
   include: ProjectIncludeKey[],
@@ -465,10 +505,9 @@ function selectNodeFields(
           }));
         break;
       case "actions":
-        out.actions = buildAvailableActions(node.id, context).map((action) => ({
-          id: action.id,
-          label: action.label,
-        }));
+        out.actions = buildAvailableActions(node.id, context).map((action) =>
+          projectActionReference(action, resolveActionId(action)),
+        );
         break;
       case "events":
         out.events = buildTimelineEvents({ ...context, focus: node.id }).map((event) =>
@@ -476,12 +515,13 @@ function selectNodeFields(
         );
         break;
       case "status":
-        out.status = computeNodeStatus(node);
+        out.status = deriveProjectionStatus(node);
         break;
       case "action":
       case "target":
       case "event":
       case "children":
+      case "counts":
         break;
     }
   }
@@ -527,15 +567,7 @@ function selectMenuFields(
 }
 
 function resolveMenuActionId(pair: MenuPair): string {
-  // Prefer binding name when it differs from node id (e.g. value.binding = "attack")
-  if (pair.action.bindingName !== pair.action.id) {
-    return pair.action.bindingName;
-  }
-  // Strip trailing "Node" suffix (e.g. "attackNode" → "attack")
-  if (pair.action.id.endsWith("Node")) {
-    return pair.action.id.slice(0, -"Node".length);
-  }
-  return pair.action.id;
+  return resolveActionId(pair.action);
 }
 
 function selectListFields(
@@ -559,8 +591,11 @@ function selectListFields(
         if (type !== null) out.type = type;
         break;
       }
+      case "value":
+        out.value = cloneGraphValue(node.value);
+        break;
       case "status":
-        out.status = computeNodeStatus(node);
+        out.status = deriveProjectionStatus(node);
         break;
       case "state":
         out.state = cloneRecord(node.state);
@@ -578,15 +613,35 @@ function selectListFields(
       case "target":
         out.target = projectNodeReference(node);
         break;
-      case "event":
-        out.event = "contains";
+      case "event": {
+        const edge = getPreferredListEdges(context.graph, context.focus)[index] ?? null;
+        if (edge) {
+          out.event = edge.relation;
+        }
         break;
+      }
       default:
         break;
     }
   }
 
   return out;
+}
+
+function getPreferredListEdges(graph: Graph, nodeId: string): GraphEdge[] {
+  const relationPriority = ["targets", "contains", "unlocks", "can"];
+  const outgoingEdges = getOutgoingEdges(graph, nodeId).filter(
+    (edge) => edge.kind === "branch",
+  );
+
+  for (const relation of relationPriority) {
+    const matches = outgoingEdges.filter((edge) => edge.relation === relation);
+    if (matches.length > 0) {
+      return matches;
+    }
+  }
+
+  return outgoingEdges;
 }
 
 function buildTreeNode(
@@ -619,7 +674,7 @@ function buildTreeNode(
         out.state = cloneRecord(node.state);
         break;
       case "status":
-        out.status = computeNodeStatus(node);
+        out.status = deriveProjectionStatus(node) ?? computeNodeStatus(node);
         break;
       case "meta":
         out.meta = cloneRecord(node.meta);
@@ -812,7 +867,10 @@ function selectSummaryFields(
         out.label = computeNodeLabel(node);
         break;
       case "status":
-        out.status = computeNodeStatus(node);
+        out.status = deriveProjectionStatus(node);
+        break;
+      case "value":
+        out.value = cloneGraphValue(node.value);
         break;
       case "state":
         out.state = cloneRecord(node.state);
@@ -821,10 +879,12 @@ function selectSummaryFields(
         out.meta = cloneRecord(node.meta);
         break;
       case "actions":
-        out.actions = buildAvailableActions(node.id, context).map((action) => ({
-          id: action.id,
-          label: action.label,
-        }));
+        out.actions = buildAvailableActions(node.id, context).map((action) =>
+          projectActionReference(action, resolveActionId(action)),
+        );
+        break;
+      case "counts":
+        out.counts = buildSummaryCounts(context.graph);
         break;
       default:
         break;
@@ -832,6 +892,24 @@ function selectSummaryFields(
   }
 
   return out;
+}
+
+function buildSummaryCounts(graph: Graph): Record<string, GraphValue> {
+  const statusCounts: Record<string, GraphValue> = {};
+
+  for (const node of graph.nodes.values()) {
+    const status = deriveProjectionStatus(node);
+    if (!status) continue;
+    const current = statusCounts[status];
+    statusCounts[status] =
+      typeof current === "number" ? current + 1 : 1;
+  }
+
+  return {
+    nodes: graph.nodes.size,
+    edges: graph.edges.length,
+    statuses: statusCounts,
+  };
 }
 
 function buildAvailableActions(
@@ -843,8 +921,9 @@ function buildAvailableActions(
   const actions: ResolvedActionCandidate[] = [];
 
   for (const pair of menuPairs) {
-    if (seen.has(pair.action.id)) continue;
-    seen.add(pair.action.id);
+    const actionId = resolveActionId(pair.action);
+    if (seen.has(actionId)) continue;
+    seen.add(actionId);
     actions.push(pair.action);
   }
 
@@ -884,8 +963,13 @@ function buildMenuPairs(context: ProjectFieldContext): MenuPair[] {
 
   for (const action of actionCandidates) {
     const runtimeAction = getAction(context.actions, action.bindingName);
+    const constrainedTargetIds = getActionSpecificTargetIds(action, context);
+    const eligibleTargets =
+      constrainedTargetIds.size > 0
+        ? targetCandidates.filter((target) => constrainedTargetIds.has(target.id))
+        : targetCandidates;
 
-    for (const target of targetCandidates) {
+    for (const target of eligibleTargets) {
       if (runtimeAction?.guard) {
         const scope = { from: context.focus, to: target.id };
         const passes = evaluateActionGuard(runtimeAction.guard, context.graph, scope);
@@ -898,9 +982,24 @@ function buildMenuPairs(context: ProjectFieldContext): MenuPair[] {
   return pairs;
 }
 
-// V1: returns a candidate for every can-edge target, whether or not a
-// registered @action exists. bindingName is used for action id derivation
-// and as a fallback for registered-action lookups elsewhere (e.g. detail/summary).
+function getActionSpecificTargetIds(
+  action: ResolvedActionCandidate,
+  context: ProjectFieldContext,
+): Set<string> {
+  if (!action.sourceNode) {
+    return new Set<string>();
+  }
+
+  return new Set(
+    getOutgoingEdges(context.graph, action.sourceNode.id)
+      .filter((edge) => edge.kind === "branch" && edge.relation === "targets")
+      .map((edge) => edge.object),
+  );
+}
+
+// Action nodes should explicitly declare their runtime binding via value.actionKey
+// (or meta.actionKey). Legacy fields and naming heuristics are kept temporarily
+// so older scenarios still render, but explicit action metadata is now canonical.
 function resolveActionCandidate(
   nodeId: string,
   context: ProjectFieldContext,
@@ -916,39 +1015,10 @@ function resolveActionCandidate(
     };
   }
 
-  const directBinding = context.actions.has(node.id) ? node.id : null;
-  const metaBinding =
-    typeof node.meta.actionBinding === "string" && context.actions.has(node.meta.actionBinding)
-      ? node.meta.actionBinding
-      : typeof node.meta.action === "string" && context.actions.has(node.meta.action)
-        ? node.meta.action
-        : null;
-  const valueBinding =
-    isRecord(node.value) &&
-    typeof node.value.binding === "string" &&
-    context.actions.has(node.value.binding)
-      ? node.value.binding
-      : isRecord(node.value) &&
-          typeof node.value.action === "string" &&
-          context.actions.has(node.value.action)
-        ? node.value.action
-        : null;
-  // Try value.id as a binding name (e.g. node value { id: "attack", type: "action", name: "Attack" })
-  const valueIdBinding =
-    isRecord(node.value) &&
-    typeof node.value.id === "string" &&
-    context.actions.has(node.value.id)
-      ? node.value.id
-      : null;
-  // Strip trailing "Node" suffix from node id (e.g. "attackNode" → "attack").
-  // Matches the output convention in resolveMenuActionId so guard lookup stays consistent.
-  const strippedNodeId = node.id.endsWith("Node") ? node.id.slice(0, -"Node".length) : null;
-  const strippedBinding =
-    strippedNodeId !== null && context.actions.has(strippedNodeId) ? strippedNodeId : null;
-
-  // Priority: explicit bindings > value.id > node-suffix stripping > raw node id (no guard)
   const bindingName =
-    directBinding ?? metaBinding ?? valueBinding ?? valueIdBinding ?? strippedBinding ?? node.id;
+    resolveExplicitActionBinding(node, context.actions) ??
+    resolveLegacyActionBinding(node, context.actions) ??
+    node.id;
 
   return {
     id: node.id,
@@ -959,13 +1029,62 @@ function resolveActionCandidate(
 }
 
 function resolveActionId(action: ResolvedActionCandidate): string {
-  if (action.bindingName !== action.id) {
-    return action.bindingName;
+  return action.bindingName;
+}
+
+function resolveExplicitActionBinding(
+  node: GraphNode,
+  actions: ActionRegistry,
+): string | null {
+  const valueActionKey =
+    isRecord(node.value) && typeof node.value.actionKey === "string"
+      ? node.value.actionKey
+      : null;
+  if (valueActionKey && actions.has(valueActionKey)) {
+    return valueActionKey;
   }
-  if (action.id.endsWith("Node")) {
-    return action.id.slice(0, -"Node".length);
+
+  const metaActionKey =
+    typeof node.meta.actionKey === "string" ? node.meta.actionKey : null;
+  if (metaActionKey && actions.has(metaActionKey)) {
+    return metaActionKey;
   }
-  return action.id;
+
+  return null;
+}
+
+function resolveLegacyActionBinding(
+  node: GraphNode,
+  actions: ActionRegistry,
+): string | null {
+  const directBinding = actions.has(node.id) ? node.id : null;
+  const metaBinding =
+    typeof node.meta.actionBinding === "string" && actions.has(node.meta.actionBinding)
+      ? node.meta.actionBinding
+      : typeof node.meta.action === "string" && actions.has(node.meta.action)
+        ? node.meta.action
+        : null;
+  const valueBinding =
+    isRecord(node.value) &&
+    typeof node.value.binding === "string" &&
+    actions.has(node.value.binding)
+      ? node.value.binding
+      : isRecord(node.value) &&
+          typeof node.value.action === "string" &&
+          actions.has(node.value.action)
+        ? node.value.action
+        : null;
+  const valueIdBinding =
+    isRecord(node.value) &&
+    typeof node.value.id === "string" &&
+    actions.has(node.value.id)
+      ? node.value.id
+      : null;
+  const strippedNodeId = node.id.endsWith("Node") ? node.id.slice(0, -"Node".length) : null;
+  const strippedBinding =
+    strippedNodeId !== null && actions.has(strippedNodeId) ? strippedNodeId : null;
+
+  return directBinding ?? metaBinding ?? valueBinding ?? valueIdBinding ?? strippedBinding;
 }
 
 function resolveActionCandidateFromEvent(
@@ -995,6 +1114,17 @@ function projectNodeReference(node: GraphNode): Record<string, GraphValue> {
     meta: cloneRecord(node.meta),
     status: computeNodeStatus(node),
   };
+}
+
+function deriveProjectionStatus(node: GraphNode): string | null {
+  if (typeof node.meta.status === "string") return node.meta.status;
+  if (typeof node.meta.result === "string") return node.meta.result;
+  if (typeof node.state.status === "string") return node.state.status;
+  if (node.state.defeated === true) return "defeated";
+  if (node.state.active === true) return "active";
+  if (node.state.resolved === true) return "resolved";
+  if (node.state.ready === true) return "ready";
+  return null;
 }
 
 function projectActionReference(

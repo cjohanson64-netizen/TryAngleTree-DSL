@@ -5,7 +5,9 @@ function getNodeLabel(node) {
 export default function TatGraphView({ data, onSelectNode, selectedNodeId }) {
   if (!data || data.format !== "graph") return null;
 
-  const nodes = data.nodes ?? [];
+  const sortedNodes = [...(data?.nodes ?? [])].sort(
+    (a, b) => (a.meta?.order ?? 999) - (b.meta?.order ?? 999),
+  );
   const edges = data.edges ?? [];
 
   return (
@@ -14,7 +16,7 @@ export default function TatGraphView({ data, onSelectNode, selectedNodeId }) {
 
       <h4 className="tat-subtitle">Nodes</h4>
       <div className="tat-node-list">
-        {nodes.map((node) => {
+        {sortedNodes.map((node) => {
           const isSelected = node.id === selectedNodeId;
 
           return (

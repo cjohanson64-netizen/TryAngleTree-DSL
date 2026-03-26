@@ -15,32 +15,6 @@ export function sourceDefinesNode(sourceCode, nodeId) {
   return pattern.test(sourceCode);
 }
 
-export function replaceFocus(sourceCode, focusNodeId) {
-  if (!focusNodeId) return sourceCode;
-
-  return sourceCode.replace(
-    /focus:\s*[A-Za-z0-9_]+/g,
-    `focus: ${focusNodeId}`,
-  );
-}
-
-export function appendApplyStep(sourceCode, applyStep) {
-  const featureBlockPattern =
-    /([A-Za-z0-9_]+\s*:=\s*@seed[\s\S]*?)(\n\n[a-zA-Z0-9_]+\s*:=|\n\n[a-zA-Z0-9_]+\s*=|$)/;
-
-  const match = sourceCode.match(featureBlockPattern);
-  if (!match) return sourceCode;
-
-  const featureBlock = match[1];
-  const nextBlockStart = match[2] ?? "";
-  const updatedFeatureBlock = `${featureBlock}\n  -> ${applyStep}`;
-
-  return sourceCode.replace(
-    featureBlockPattern,
-    `${updatedFeatureBlock}${nextBlockStart}`,
-  );
-}
-
 export function clearApplyHistory(sourceCode) {
   return sourceCode
     .split("\n")

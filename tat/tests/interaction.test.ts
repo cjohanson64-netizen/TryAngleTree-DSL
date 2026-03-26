@@ -2,8 +2,12 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { addNode, createGraph } from "../runtime/graph";
 import {
+  applyTatAction,
+  createTatRuntimeSession,
   executeGraphInteraction,
+  inspectTatRuntimeSession,
   parseTatToAst,
+  setTatFocus,
   executeTat,
   type GraphInteraction,
   type GraphInteractionHistoryEntry,
@@ -55,6 +59,146 @@ attack := @graph(hero) : "attacks" : @graph(enemy)
   assert.equal(result.debug.graphInteractions.attack.objectGraphId, "enemy");
   assert.equal(result.execution.state.graphs.size, 0);
   assert.deepEqual(result.debug.interactionHistory, []);
+});
+
+test("applyTatAction updates a live runtime session without mutating source text", () => {
+  const source = `
+heroNode = <{ id: "hero", type: "character", name: "Hero" }>
+goblinNode = <{ id: "goblin", type: "enemy", name: "Goblin" }>
+attackNode = <{ id: "attack", type: "action", name: "Attack", actionKey: "attack" }>
+
+attack := @action {
+  pipeline:
+    -> @graft.state(to, "hp", 0)
+    -> @graft.meta(to, "status", defeated)
+}
+
+@seed:
+  nodes: [heroNode, goblinNode, attackNode]
+  edges: [
+    [heroNode : "can" : attackNode],
+    [heroNode : "targets" : goblinNode]
+  ]
+  state: {}
+  meta: {}
+  root: heroNode
+
+battle := @seed
+  -> @graft.state(goblinNode, "hp", 3)
+
+battleMenu = battle <> @project {
+  format: "menu"
+  focus: heroNode
+  include: [id, label, action, target, status]
+}
+
+battleDetail = battle <> @project {
+  format: "detail"
+  focus: heroNode
+  include: [id, label, type, state, meta, value, actions, relationships, status]
+}
+`;
+
+  const session = createTatRuntimeSession(source);
+  const nextSession = applyTatAction(session, {
+    graphBinding: "battle",
+    from: "heroNode",
+    action: "attack",
+    target: "goblinNode",
+  });
+  const focusedSession = setTatFocus(nextSession, {
+    graphBinding: "battle",
+    nodeId: "goblinNode",
+  });
+  const result = inspectTatRuntimeSession(focusedSession);
+
+  assert.equal(source.includes("@apply(<heroNode.attack.goblinNode>)"), false);
+  assert.equal(result.debug.graphs.battle.nodes.find((node: any) => node.id === "goblinNode")?.state.hp, 0);
+  assert.equal(result.debug.graphs.battle.nodes.find((node: any) => node.id === "goblinNode")?.meta.status, "defeated");
+  assert.equal(result.debug.graphs.battle.history.at(-1)?.op, "@graft.meta");
+  assert.equal(result.debug.graphs.battle.history.at(-2)?.op, "@graft.state");
+  assert.equal(result.debug.graphs.battle.history.at(-3)?.op, "@apply");
+  assert.equal((result.debug.projections.battleDetail as any).focus.id, "goblinNode");
+});
+
+test("runtime session projections use runtime-owned focus", () => {
+  const session = createTatRuntimeSession(`
+heroNode = <{ id: "hero", type: "character", name: "Hero" }>
+allyNode = <{ id: "ally", type: "character", name: "Ally" }>
+
+@seed:
+  nodes: [heroNode, allyNode]
+  edges: [[heroNode : "targets" : allyNode]]
+  state: {}
+  meta: {}
+  root: heroNode
+
+battle := @seed
+
+battleList = battle <> @project {
+  format: "list"
+  focus: heroNode
+  include: [id, label, type, status, value, state, meta]
+}
+`);
+
+  const defaultResult = inspectTatRuntimeSession(session);
+  const refocusedResult = inspectTatRuntimeSession(setTatFocus(session, {
+    graphBinding: "battle",
+    nodeId: "allyNode",
+  }));
+
+  assert.equal((defaultResult.debug.projections.battleList as any).focus.id, "heroNode");
+  assert.equal((refocusedResult.debug.projections.battleList as any).focus.id, "allyNode");
+});
+
+test("runtime focus persists across action cycles", () => {
+  const session = createTatRuntimeSession(`
+heroNode = <{ id: "hero", type: "character", name: "Hero" }>
+goblinNode = <{ id: "goblin", type: "enemy", name: "Goblin" }>
+attackNode = <{ id: "attack", type: "action", name: "Attack", actionKey: "attack" }>
+
+attack := @action {
+  pipeline:
+    -> @graft.meta(to, "status", defeated)
+}
+
+@seed:
+  nodes: [heroNode, goblinNode, attackNode]
+  edges: [
+    [heroNode : "can" : attackNode],
+    [heroNode : "targets" : goblinNode]
+  ]
+  state: {}
+  meta: {}
+  root: heroNode
+
+battle := @seed
+
+battleDetail = battle <> @project {
+  format: "detail"
+  focus: heroNode
+  include: [id, label, type, state, meta, value, actions, relationships, status]
+}
+`);
+
+  const focusedSession = setTatFocus(session, {
+    graphBinding: "battle",
+    nodeId: "goblinNode",
+  });
+  const updatedSession = applyTatAction(focusedSession, {
+    graphBinding: "battle",
+    from: "heroNode",
+    action: "attack",
+    target: "goblinNode",
+  });
+  const result = inspectTatRuntimeSession(updatedSession);
+
+  assert.equal((result.debug.projections.battleDetail as any).focus.id, "goblinNode");
+  assert.equal(
+    result.debug.graphs.battle.nodes.find((node: any) => node.id === "goblinNode")?.meta.status,
+    "defeated",
+  );
 });
 
 test("executeGraphInteraction records workspace interaction history and causal graph history", () => {

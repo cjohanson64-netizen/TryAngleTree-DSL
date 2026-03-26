@@ -5,10 +5,10 @@ import type {
   BooleanValueNode,
   ComposeExprNode,
   GraphControlExprNode,
+  GraphProjectionNode,
   GraphInteractionDefinitionNode,
   GraphPipelineNode,
   GraphPipelineStepNode,
-  GraphProjectionNode,
   IfExprNode,
   ProgramNode,
   PruneEdgesExprNode,
@@ -112,6 +112,7 @@ export interface RuntimeState {
   seed: SeedBlockNode | null;
   seedGraph: Graph | null;
   graphs: Map<string, Graph>;
+  graphFocus: Map<string, string>;
   projections: Map<string, unknown>;
   graphInteractions: Map<string, GraphInteraction>;
   anonymousGraphInteractions: GraphInteraction[];
@@ -132,6 +133,24 @@ export interface ExecuteProgramOptions {
   initialState?: Partial<RuntimeState>;
 }
 
+export interface RuntimeApplyActionRequest {
+  graphBinding: string;
+  from: string;
+  action: string;
+  target: string;
+}
+
+export interface RuntimeFocusRequest {
+  graphBinding: string;
+  nodeId: string;
+}
+
+export interface RuntimeProjectionOptions {
+  // Deprecated compatibility path for tooling/tests that still need to force
+  // projection focus externally. Runtime-owned graphFocus is the canonical path.
+  focusOverrides?: Record<string, string>;
+}
+
 export function executeProgram(
   program: ProgramNode,
   options?: ExecuteProgramOptions,
@@ -145,6 +164,7 @@ export function executeProgram(
     seed: initialState?.seed ?? null,
     seedGraph: initialState?.seedGraph ?? null,
     graphs: initialState?.graphs ?? new Map<string, Graph>(),
+    graphFocus: initialState?.graphFocus ?? new Map<string, string>(),
     projections: initialState?.projections ?? new Map<string, unknown>(),
     graphInteractions:
       initialState?.graphInteractions ?? new Map<string, GraphInteraction>(),
@@ -163,6 +183,150 @@ export function executeProgram(
   }
 
   return { state };
+}
+
+export function reprojectRuntimeState(
+  program: ProgramNode,
+  state: RuntimeState,
+  options?: RuntimeProjectionOptions,
+): Map<string, unknown> {
+  const projections = new Map<string, unknown>();
+
+  for (const statement of program.body) {
+    if (statement.type === "GraphPipeline") {
+      const graph = state.graphs.get(statement.name.name);
+      if (!graph) {
+        continue;
+      }
+
+      projections.set(
+        statement.name.name,
+        projectGraphResult(
+          graph,
+          withResolvedProjectionFocus(
+            statement.name.name,
+            statement.name.name,
+            statement.projection,
+            state,
+            options?.focusOverrides,
+          ),
+          state,
+        ),
+      );
+      continue;
+    }
+
+    if (statement.type === "GraphProjection") {
+      const graph = state.graphs.get(statement.source.name);
+      if (!graph) {
+        continue;
+      }
+
+      projections.set(
+        statement.name.name,
+        projectGraphResult(
+          graph,
+          withResolvedProjectionFocus(
+            statement.name.name,
+            statement.source.name,
+            statement.projection,
+            state,
+            options?.focusOverrides,
+          ),
+          state,
+        ),
+      );
+    }
+  }
+
+  return projections;
+}
+
+export function setRuntimeFocus(
+  program: ProgramNode,
+  state: RuntimeState,
+  request: RuntimeFocusRequest,
+): RuntimeState {
+  const graph = state.graphs.get(request.graphBinding);
+  if (!graph) {
+    throw new Error(`Graph "${request.graphBinding}" is not available in runtime state`);
+  }
+
+  if (!graph.nodes.has(request.nodeId)) {
+    throw new Error(
+      `Focus node "${request.nodeId}" does not exist in graph "${request.graphBinding}"`,
+    );
+  }
+
+  const graphFocus = new Map(state.graphFocus);
+  graphFocus.set(request.graphBinding, request.nodeId);
+  const nextState: RuntimeState = {
+    ...state,
+    graphFocus,
+  };
+
+  return {
+    ...nextState,
+    projections: reprojectRuntimeState(program, nextState),
+  };
+}
+
+export function applyRuntimeAction(
+  program: ProgramNode,
+  state: RuntimeState,
+  request: RuntimeApplyActionRequest,
+  options?: RuntimeProjectionOptions,
+): RuntimeState {
+  const originalGraph = state.graphs.get(request.graphBinding);
+  if (!originalGraph) {
+    throw new Error(`Graph "${request.graphBinding}" is not available in runtime state`);
+  }
+
+  const action = state.actions.get(request.action);
+  if (!action) {
+    throw new Error(`@apply could not find action "${request.action}"`);
+  }
+
+  const graph = cloneGraph(originalGraph);
+  const reactive = createReactiveCycleState(graph, state);
+  const applyEvent = addHistoryEntry(graph, {
+    op: "@apply",
+    payload: {
+      from: request.from,
+      action: request.action,
+      to: request.target,
+    },
+  });
+
+  const result = executeAction(
+    graph,
+    action,
+    {
+      from: request.from,
+      to: request.target,
+    },
+    state.actions,
+    {
+      causedBy: applyEvent.id,
+      onGraphMutation: () => flushReactiveTriggers(graph, state, reactive),
+    },
+  );
+
+  if (!result.didRun) {
+    return state;
+  }
+
+  const graphs = new Map(state.graphs);
+  graphs.set(request.graphBinding, graph);
+  const nextState: RuntimeState = {
+    ...state,
+    graphs,
+  };
+
+  return {
+    ...nextState,
+    projections: reprojectRuntimeState(program, nextState, options),
+  };
 }
 
 function executeStatement(statement: StatementNode, state: RuntimeState): void {
@@ -220,6 +384,44 @@ function executeStatement(statement: StatementNode, state: RuntimeState): void {
       );
     }
   }
+}
+
+function withResolvedProjectionFocus(
+  projectionName: string,
+  graphBinding: string,
+  projection: GraphPipelineNode["projection"] | GraphProjectionNode["projection"],
+  state: RuntimeState,
+  focusOverrides?: Record<string, string>,
+) {
+  const runtimeFocus = state.graphFocus.get(graphBinding) ?? null;
+  const fallbackOverride = focusOverrides?.[projectionName] ?? null;
+  const resolvedFocus = runtimeFocus ?? fallbackOverride;
+
+  if (!resolvedFocus || !projection) {
+    return projection;
+  }
+
+  const nextArgs = projection.args.filter(
+    (arg) => arg.key?.name !== "focus",
+  );
+
+  nextArgs.push({
+    type: "Argument",
+    key: {
+      type: "Identifier",
+      name: "focus",
+    },
+    value: {
+      type: "StringLiteral",
+      value: resolvedFocus,
+      raw: JSON.stringify(resolvedFocus),
+    },
+  });
+
+  return {
+    ...projection,
+    args: nextArgs,
+  };
 }
 
 function executeValueBinding(
@@ -416,6 +618,12 @@ function executeGraphPipeline(
   }
 
   state.graphs.set(pipeline.name.name, graph);
+  initializeGraphFocus(
+    state,
+    pipeline.name.name,
+    graph,
+    pipeline.projection,
+  );
   state.assetKinds.set(pipeline.name.name, "graph");
   state.projections.set(
     pipeline.name.name,
@@ -441,9 +649,31 @@ function executeGraphProjection(
     );
   }
 
+  initializeGraphFocus(
+    state,
+    graphName,
+    graph,
+    statement.projection,
+  );
   const result = projectGraphResult(graph, statement.projection, state);
   state.projections.set(statement.name.name, result);
   state.assetKinds.set(statement.name.name, "projection");
+}
+
+function initializeGraphFocus(
+  state: RuntimeState,
+  graphBinding: string,
+  graph: Graph,
+  projection: GraphPipelineNode["projection"] | GraphProjectionNode["projection"],
+): void {
+  if (state.graphFocus.has(graphBinding)) {
+    return;
+  }
+
+  const initialFocus = resolveInitialGraphFocus(projection, graph, state);
+  if (initialFocus) {
+    state.graphFocus.set(graphBinding, initialFocus);
+  }
 }
 
 function executeWhenExpr(statement: WhenExprNode, state: RuntimeState): void {
@@ -865,6 +1095,30 @@ function executePruneEdgesExpr(
   );
 
   graph.edges = graph.edges.filter((edge) => !removeIds.has(edge.id));
+}
+
+function resolveInitialGraphFocus(
+  projection: GraphPipelineNode["projection"] | GraphProjectionNode["projection"],
+  graph: Graph,
+  state: RuntimeState,
+): string | null {
+  const focusArg =
+    projection?.args.find((arg) => arg.key?.name === "focus") ?? null;
+
+  if (!focusArg) {
+    return graph.root;
+  }
+
+  if (focusArg.value.type === "Identifier" && state.bindings.nodes.has(focusArg.value.name)) {
+    return state.bindings.nodes.get(focusArg.value.name)!.id;
+  }
+
+  const value = evaluateValueExpr(focusArg.value, state.bindings, state.actions);
+  if (typeof value === "string" && graph.nodes.has(value)) {
+    return value;
+  }
+
+  return graph.root;
 }
 
 function executeApplyExpr(

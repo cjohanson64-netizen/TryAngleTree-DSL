@@ -1,9 +1,9 @@
 heroNode = <{ id: "hero", type: "character", name: "Hero" }>
 goblinNode = <{ id: "goblin", type: "enemy", name: "Goblin" }>
-attackNode = <{ id: "attack", type: "action", name: "Attack" }>
-healNode = <{ id: "heal", type: "action", name: "Heal" }>
+attackNode = <{ id: "attack", type: "action", name: "Attack", actionKey: "attack" }>
+healNode = <{ id: "heal", type: "action", name: "Heal", actionKey: "heal" }>
 wizardNode = <{ id: "wizard", type: "character", name: "Wizard" }>
-moveNode = <{ id: "move", type: "action", name: "Move" }>
+moveNode = <{ id: "move", type: "action", name: "Move", actionKey: "move" }>
 
 attack := @action {
   guard:
@@ -37,12 +37,25 @@ move := @action {
   nodes: [heroNode, wizardNode, goblinNode, attackNode, healNode, moveNode]
   edges: [
     [heroNode : "can" : attackNode],
-    [wizardNode : "can" : attackNode],
     [heroNode : "can" : healNode],
     [heroNode : "can" : moveNode],
+
+    [wizardNode : "can" : attackNode],
+    [wizardNode : "can" : healNode],
+
+    [goblinNode : "can" : attackNode],
+    [goblinNode : "can" : moveNode],
+
     [heroNode : "targets" : goblinNode],
     [heroNode : "targets" : heroNode],
-    [wizardNode : "targets" : goblinNode]
+    [heroNode : "targets" : wizardNode],
+
+    [wizardNode : "targets" : goblinNode],
+    [wizardNode : "targets" : heroNode],
+
+    [goblinNode : "targets" : heroNode],
+    [goblinNode : "targets" : wizardNode],
+    [goblinNode : "targets" : goblinNode]
   ]
   state: {}
   meta: {}
@@ -50,31 +63,53 @@ move := @action {
 
 battle := @seed
   -> @graft.state(heroNode, "hp", 10)
-  -> @graft.state(goblinNode, "hp", 3)
   -> @graft.state(wizardNode, "hp", 10)
+  -> @graft.state(goblinNode, "hp", 3)
+
+  -> @graft.meta(heroNode, "order", 1)
+  -> @graft.meta(wizardNode, "order", 2)
+  -> @graft.meta(goblinNode, "order", 3)
 
 battleGraph = battle <> @project(format: "graph")
 
+battleDetail = battle <> @project {
+  format: "detail"
+  focus: goblinNode
+  include: [id, label, type, state, meta, value, actions, relationships, status]
+}
+
 battleMenu = battle <> @project {
   format: "menu"
-  focus: heroNode
+  focus: goblinNode
   include: [id, label, action, target, status]
+}
+
+battleSummary = battle <> @project {
+  format: "summary"
+  focus: goblinNode
+  include: [id, label, status, value, state, meta, actions, counts]
+}
+
+battleList = battle <> @project {
+  format: "list"
+  focus: goblinNode
+  include: [id, label, type, status, value, state, meta]
 }
 
 battleTree = battle <> @project {
   format: "tree"
-  focus: heroNode
+  focus: goblinNode
   include: [id, label, value, state, meta, children]
 }
 
 battleTrace = battle <> @project {
   format: "trace"
-  focus: heroNode
+  focus: goblinNode
   include: [id, step, from, to, events, action, target, label, status, state, meta, raw]
 }
 
 battleTimeline = battle <> @project {
   format: "timeline"
-  focus: heroNode
+  focus: goblinNode
   include: [id, step, from, events, action, target, label, status, state, meta, raw]
 }

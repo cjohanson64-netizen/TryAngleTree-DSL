@@ -1,12 +1,17 @@
-import { useMemo } from "react";
-import { executeTat } from "@tat";
+import { useEffect, useMemo, useState } from "react";
+import {
+  applyTatAction,
+  createTatRuntimeSession,
+  inspectTatRuntimeSession,
+  setTatFocus,
+} from "@tat";
 
 function normalizeGraphProjection(rawGraph) {
   if (!rawGraph) return null;
 
   return {
     format: "graph",
-    focus: rawGraph.root ?? null,
+    focus: rawGraph.focus ?? rawGraph.root ?? null,
     root: rawGraph.root ?? null,
     nodes: rawGraph.nodes ?? [],
     edges: rawGraph.edges ?? [],
@@ -56,14 +61,106 @@ function normalizeTreeProjection(rawTree) {
   };
 }
 
-export function useTatPlayground(sourceCode, projectionBindings = {}) {
-  const result = useMemo(() => {
-    try {
-      const executed = executeTat(sourceCode);
+function normalizeDetailProjection(rawDetail) {
+  if (!rawDetail) return null;
 
+  return {
+    format: "detail",
+    focus: rawDetail.focus ?? null,
+    node: rawDetail.node ?? null,
+  };
+}
+
+function normalizeSummaryProjection(rawSummary) {
+  if (!rawSummary) return null;
+
+  return {
+    format: "summary",
+    focus: rawSummary.focus ?? null,
+    data: rawSummary.data ?? {},
+  };
+}
+
+function normalizeListProjection(rawList) {
+  if (!rawList) return null;
+
+  return {
+    format: "list",
+    focus: rawList.focus ?? null,
+    items: rawList.items ?? [],
+  };
+}
+
+function createSessionResult(sourceCode) {
+  try {
+    return {
+      ok: true,
+      session: createTatRuntimeSession(sourceCode),
+      error: null,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      session: null,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+const projectionNormalizers = {
+  graph: normalizeGraphProjection,
+  menu: normalizeMenuProjection,
+  trace: normalizeTraceProjection,
+  timeline: normalizeTimelineProjection,
+  detail: normalizeDetailProjection,
+  summary: normalizeSummaryProjection,
+  list: normalizeListProjection,
+  tree: normalizeTreeProjection,
+};
+
+function normalizeProjectionSet(projectionBindings, debug) {
+  const graphs = debug.graphs ?? {};
+  const projections = debug.projections ?? {};
+
+  function getProjection(bindingName) {
+    if (!bindingName) return null;
+    return projections[bindingName] ?? graphs[bindingName] ?? null;
+  }
+
+  return Object.fromEntries(
+    Object.entries(projectionNormalizers).map(([projectionKey, normalize]) => {
+      const bindingName = projectionBindings[projectionKey];
+      const rawProjection = getProjection(bindingName);
+      return [projectionKey, normalize(rawProjection)];
+    }),
+  );
+}
+
+export function useTatPlayground(
+  sourceCode,
+  projectionBindings = {},
+) {
+  const [runtimeState, setRuntimeState] = useState(() =>
+    createSessionResult(sourceCode),
+  );
+
+  useEffect(() => {
+    setRuntimeState(createSessionResult(sourceCode));
+  }, [sourceCode]);
+
+  const executionResult = useMemo(() => {
+    if (!runtimeState.ok || !runtimeState.session) {
+      return {
+        ok: false,
+        data: null,
+        error: runtimeState.error,
+      };
+    }
+
+    try {
       return {
         ok: true,
-        data: executed,
+        data: inspectTatRuntimeSession(runtimeState.session),
         error: null,
       };
     } catch (error) {
@@ -73,60 +170,66 @@ export function useTatPlayground(sourceCode, projectionBindings = {}) {
         error: error instanceof Error ? error.message : String(error),
       };
     }
-  }, [sourceCode]);
+  }, [runtimeState]);
 
-  const debug = result.data?.debug ?? {};
+  const debug = executionResult.data?.debug ?? {};
   const graphs = debug.graphs ?? {};
-  const bindings = debug.bindings ?? {};
-  const projectionsDebug = debug.projections ?? {};
+  const projections = normalizeProjectionSet(projectionBindings, debug);
 
-  const graphKey = projectionBindings.graph;
-  const menuKey = projectionBindings.menu;
-  const traceKey = projectionBindings.trace;
-  const timelineKey = projectionBindings.timeline;
-  const treeKey = projectionBindings.tree;
+  function interact(actionRequest) {
+    setRuntimeState((current) => {
+      if (!current.ok || !current.session) {
+        return current;
+      }
 
-  const rawGraphProjection =
-    (graphKey && (graphs[graphKey] ?? bindings[graphKey] ?? projectionsDebug[graphKey])) ??
-    null;
+      try {
+        return {
+          ok: true,
+          session: applyTatAction(current.session, actionRequest),
+          error: null,
+        };
+      } catch (error) {
+        return {
+          ok: false,
+          session: current.session,
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+    });
+  }
 
-  const rawMenuProjection =
-    (menuKey && (projectionsDebug[menuKey] ?? bindings[menuKey] ?? graphs[menuKey])) ??
-    null;
+  function setFocus(graphBinding, nodeId) {
+    setRuntimeState((current) => {
+      if (!current.ok || !current.session) {
+        return current;
+      }
 
-  const rawTraceProjection =
-    (traceKey && (projectionsDebug[traceKey] ?? bindings[traceKey] ?? graphs[traceKey])) ??
-    null;
-
-  const rawTimelineProjection =
-    (timelineKey &&
-      (projectionsDebug[timelineKey] ?? bindings[timelineKey] ?? graphs[timelineKey])) ??
-    null;
-
-  const rawTreeProjection =
-    (treeKey && (projectionsDebug[treeKey] ?? bindings[treeKey] ?? graphs[treeKey])) ?? null;
-
-  const normalizedGraph = normalizeGraphProjection(rawGraphProjection);
-
-  const projections = {
-    graph: normalizedGraph,
-    menu: normalizeMenuProjection(rawMenuProjection),
-    trace: normalizeTraceProjection(rawTraceProjection),
-    timeline: normalizeTimelineProjection(rawTimelineProjection),
-    detail: null,
-    summary: null,
-    list: null,
-    tree: normalizeTreeProjection(rawTreeProjection),
-  };
+      try {
+        return {
+          ok: true,
+          session: setTatFocus(current.session, { graphBinding, nodeId }),
+          error: null,
+        };
+      } catch (error) {
+        return {
+          ok: false,
+          session: current.session,
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+    });
+  }
 
   return {
     sourceCode,
     projections,
     graphs,
-    validation: result.data?.validation ?? [],
-    ast: result.data?.printedAst ?? "",
-    tokens: result.data?.tokens ?? [],
-    executionResult: result,
+    validation: executionResult.data?.validation ?? [],
+    ast: executionResult.data?.printedAst ?? "",
+    tokens: executionResult.data?.tokens ?? [],
+    executionResult,
     debug,
+    interact,
+    setFocus,
   };
 }

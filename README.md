@@ -1,39 +1,10 @@
-# TryAngleTree (TAT) Playground
+# TryAngleTree (TAT)
 
-A canonical example of a **TAT-powered application**.
+## Overview
 
-This project demonstrates how to build apps where:
+TryAngleTree (TAT) is a structural language and runtime for building applications where **meaning, interaction, and state evolution are owned by the graph itself**, not by UI code.
 
-- **TAT defines structure and behavior**
-- **Projections define the interface**
-- **JSX renders without interpreting meaning**
-
----
-
-# What is TAT?
-
-TryAngleTree (TAT) is a structural language for building systems as graphs.
-
-It acts as a semantic layer between:
-
-```
-
-Data (structure) ↔ Meaning (UI)
-
-```
-
-Instead of writing logic directly in JavaScript, you:
-
-1. Define structure and behavior in TAT
-2. Execute that structure
-3. Project it into UI-friendly formats
-4. Render those projections
-
----
-
-# Core Architecture
-
-This diagram represents the core mental model of TAT:
+TAT acts as the semantic layer between data and rendering:
 
 ```md
                   BRANCHES                     (UI / Meaning)
@@ -45,235 +16,336 @@ client  ─────────── <T@T> ──────────�
                     ROOTS                      (Data / Engine)
 ```
 
+* **ROOTS** → raw data + runtime execution
+* **TAT** → structure + semantics + interaction
+* **BRANCHES** → UI rendering (JSX, CSS, media)
+
+---
+
+## Core Principle
+
+> **TAT owns meaning. JSX renders meaning.**
+
+* TAT defines:
+
+  * structure (nodes, edges)
+  * state (state, meta)
+  * valid interactions (`@action`, `@apply`)
+  * projections (`@project`)
+
+* JSX defines:
+
+  * layout
+  * styling
+  * human-readable phrasing
+  * media (images, sound, animation)
+
+---
+
+## The Runtime Model 
+
+TAT  operates as a **true runtime system**, not just a compiled source loop.
+
+### Canonical Interaction Flow
+
+```txt
+Author source once
+→ create TAT runtime session
+→ interact through runtime actions
+→ regenerate projections
+→ render UI
+→ reset by reloading authored source
 ```
 
-TAT source
-→ execute
-→ projections
-→ render
-→ user interaction
-→ update source
-→ repeat
+### What this means
 
-```
-
-This project implements that loop through a **TatFeature system**.
+* `.tat` files are **initial programs**, not mutable runtime state
+* Runtime session becomes the **source of truth** during interaction
+* UI actions call into the runtime directly
+* No source string mutation occurs during interaction
 
 ---
 
-# TatFeature Model
+## Authoring vs Runtime Modes
 
-Each feature defines:
+### Authoring Mode (Playground)
 
-- **TAT source** → the semantic program
-- **Projections** → what the UI can see
-- **Renderers** → how projections are displayed
-- **Interactions** → how user actions update source
+* edit `.tat` source
+* run program
+* inspect projections
 
-Example features:
+### Runtime Mode (Applications)
 
-- Battle system
-- Curriculum system
-
-The app shell does not know about the domain.
-
-It only knows:
-
-- run the feature
-- render projections
-- apply updates
+* load `.tat` once
+* create runtime session
+* interact via actions
+* projections update automatically
 
 ---
 
-# Projection System
+## TAT Language Basics
 
-TAT produces structured projections:
-
-| Projection | Purpose |
-|----------|--------|
-| `graph` | full structural state |
-| `menu` | available actions |
-| `detail` | focused node |
-| `summary` | condensed info |
-| `list` | related nodes |
-| `tree` | hierarchical structure |
-| `trace` | interaction history |
-| `timeline` | human-readable events |
-
----
-
-# Key Principle
-
-> TAT owns meaning. JSX renders meaning.
-
-JSX does not:
-- interpret graph state
-- infer semantics
-- derive behavior
-
-It only renders what TAT provides.
-
----
-
-# Live Debugging (Core Feature)
-
-One of the most powerful aspects of this system:
-
-## Errors are visible in the UI
-
-Instead of hidden console logs, errors are:
-
-- returned from the TAT runtime
-- rendered directly in the app
-- updated in real time as code changes
-
-### What this looks like
-
-- Codex edits TAT → errors appear immediately
-- Partial fixes → errors update live
-- Final fix → errors disappear
-
-The app never crashes.
-
-The UI stays stable while semantics evolve.
-
----
-
-# Why This Matters
-
-This creates a completely different development experience:
-
-## Traditional apps
-
-```
-
-edit → break → reload → debug → repeat
-
-```
-
-## TAT apps
-
-```
-
-edit → system updates → errors visible → refine → stabilize
-
-````
-
-You can literally **watch the system converge**.
-
----
-
-# Why This App Feels Stable
-
-The architecture enforces strict separation:
-
-- TAT → structure + behavior
-- projections → interface contract
-- JSX → rendering only
-
-This prevents:
-
-- fragile coupling
-- cascading UI failures
-- hidden state assumptions
-
----
-
-# Example
+### Nodes
 
 ```tat
--> @apply(<heroNode.attack.goblinNode>)
-````
-
-Produces:
-
-## Trace
-
-```
-Hero attack Goblin
+heroNode = <{ id: "hero", type: "character", name: "Hero" }>
 ```
 
-## Timeline
+### Edges
 
-```
-Hero targeted Goblin with Attack
-```
-
-## Graph update
-
-```
-Goblin.hp = 0
-status = defeated
+```tat
+[heroNode : "can" : attackNode]
+[heroNode : "targets" : goblinNode]
 ```
 
-All of this comes from TAT — not JSX.
+### Actions
 
----
-
-# Folder Structure
-
-```
-src/app/
-  features/        → TatFeatures (battle, curriculum)
-  projections/     → shared renderers
-  registry/        → feature + projection wiring
-  hooks/           → TAT execution
-  utils/           → helpers
+```tat
+attack := @action {
+  guard:
+    @query { node: to state: "hp" }
+  pipeline:
+    -> @graft.branch(from, "attacks", to)
+    -> @graft.state(to, "hp", 0)
+}
 ```
 
-Each feature contains:
+### Seed
 
+```tat
+@seed:
+  nodes: [heroNode, goblinNode]
+  edges: [...]
 ```
-feature/
-  feature.js
-  tat/
-    source.tat
+
+### Apply
+
+```tat
+@apply(<heroNode.attack.goblinNode>)
 ```
 
 ---
 
-# Adding a New Feature
+## Runtime API
 
-1. Create a `.tat` file
-2. Define projections using `@project`
-3. Create a feature file with:
+### Create session
 
-   * source
-   * tabs
-   * projection bindings
-   * interactions
-4. Register the feature
+```ts
+const session = createTatRuntimeSession(source);
+```
 
-No changes to the shell required.
+### Apply action
+
+```ts
+applyTatAction(session, {
+  graphBinding: "battle",
+  from: "heroNode",
+  action: "attack",
+  target: "goblinNode",
+});
+```
+
+### Inspect projections
+
+```ts
+inspectTatRuntimeSession(session);
+```
 
 ---
 
-# What Belongs Where
+## Projection System
 
-## In TAT
+TAT projections are fully runtime-owned.
 
-* structure
+### Supported formats
+
+* `graph`
+* `detail`
+* `summary`
+* `list`
+* `menu`
+* `tree`
+* `trace`
+* `timeline`
+
+### Example
+
+```tat
+battleDetail = battle <> @project {
+  format: "detail"
+  focus: goblinNode
+}
+```
+
+### Key idea
+
+> Projections are **semantic views**, not UI transformations.
+
+JSX does not interpret meaning — it only renders projection output.
+
+---
+
+## Interaction Model
+
+```txt
+UI → runtime action → mutate graph → reproject
+```
+
+This removes:
+
+* regex-based source mutation
+* duplicated logic in JS
+* desynchronization between source and runtime
+
+---
+
+## Architectural Guarantees
+
+TAT now guarantees:
+
+### 1. Semantic Ownership
+
+All meaning is defined in TAT:
+
 * relationships
 * actions
 * state transitions
 * projections
-* interaction history
 
-## In JSX
+### 2. Deterministic Execution
 
-* layout
-* styling
-* rendering projections
+Runtime applies actions directly to graph state.
 
-## In the Shell
+### 3. Projection Contracts
 
-* execution loop
-* feature switching
-* state orchestration
+Each format has strict output rules enforced at runtime.
+
+### 4. UI Independence
+
+UI does not interpret logic — it renders structured data.
 
 ---
 
-# Why TAT?
+## Example Mental Model
+
+```txt
+TAT = semantic grammar
+JSX = expressive voice
+```
+
+Same meaning can be rendered as:
+
+* Debug: `heroNode.attack.goblinNode`
+* Teacher: `Hero attacked Goblin`
+* Student: `You hit the Goblin`
+
+---
+
+## What TAT Is Not
+
+TAT does NOT:
+
+* render UI
+* format human language
+* manage layout
+* control styling
+
+These jobs belong to JSX/CSS.
+
+---
+
+## Current Status
+
+### Completed
+
+* Projection system fully TAT-native
+* Runtime interaction API implemented
+* No source mutation during interaction
+* Feature system supports domain-specific graphs
+
+### Next Areas
+
+* further runtime ergonomics
+* persistence / save state
+* multi-session orchestration
+
+---
+
+## TAT App Development Workflow
+
+Building a TAT-powered app differs from traditional app development in one key way:
+
+> **You are not wiring UI to logic—you are observing and interacting with a live semantic system.**
+
+### Traditional workflow
+
+```txt
+UI event → JS logic → state update → re-render
+```
+
+### TAT workflow
+
+```txt
+UI event → runtime action → graph mutation → projection update → render
+```
+
+### What this feels like in practice
+
+* Clicking a button does not call arbitrary JS logic
+* It dispatches a structured action into the runtime
+* The runtime mutates the graph deterministically
+* Projections immediately reflect the new state
+* The UI updates without needing to interpret meaning
+
+### Live mutation
+
+A defining feature of TAT apps is that you can **watch the system evolve in real time**:
+
+* Actions mutate graph state directly
+* Timeline/trace projections update live
+* Detail/summary/list reflect current semantic state
+* No hidden state transformations exist in UI code
+
+This creates a development experience where:
+
+* bugs surface as structural inconsistencies, not UI glitches
+* behavior is inspectable through projections
+* the app becomes a transparent system, not a black box
+
+### Mental shift
+
+Instead of writing:
+
+```js
+if (hp <= 0) setStatus("defeated");
+```
+
+You define:
+
+```tat
+-> @graft.meta(target, "status", defeated)
+```
+
+And let projections express that meaning.
+
+---
+
+## Summary
+
+TAT is a system where:
+
+* **Structure defines meaning**
+* **Actions evolve structure**
+* **Projections expose meaning**
+* **UI renders meaning**
+
+In short:
+
+> **TAT is not just compiled — it runs.**
+
+---
+
+## Why TAT?
 
 This project exists to answer one question:
 
@@ -288,38 +360,24 @@ The result:
 
 ---
 
-# Status
-
-Phase 3 complete:
-
-* trace → TAT-native
-* timeline → TAT-native
-* tree → TAT-native
-* no JS-derived interaction history
-* projections are the source of truth
-
-Next: Phase 4 (documentation + refinement)
-
----
-
-# Future Directions
+## Future Directions
 
 * richer projection types
 * event semantics (`@when`)
 * conditional logic (`@if`)
 * collection/option derivation
+* persistence / save state
+* multi-session orchestration
 * domain-specific features (music, teaching, etc.)
 
 ---
 
-# Final Thought
+## Final Thought
 
 This is not just a demo.
 
-It is a **reference implementation of a TAT-powered app**.
-
-A system where:
+It is a **reference implementation of a TAT-powered app**:
 
 * structure drives behavior
 * behavior drives interface
-* and the UI never breaks when the system evolves
+* UI renders meaning without owning semantics

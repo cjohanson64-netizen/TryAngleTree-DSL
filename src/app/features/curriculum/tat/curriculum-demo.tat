@@ -5,9 +5,9 @@ additionNode = <{ id: "addition", type: "lesson", name: "Addition" }>
 subtractionNode = <{ id: "subtraction", type: "lesson", name: "Subtraction" }>
 wordProblemsNode = <{ id: "wordProblems", type: "lesson", name: "Word Problems" }>
 
-startLessonNode = <{ id: "startLesson", type: "action", name: "Start Lesson" }>
-reviewLessonNode = <{ id: "reviewLesson", type: "action", name: "Review Lesson" }>
-completeLessonNode = <{ id: "completeLesson", type: "action", name: "Complete Lesson" }>
+startLessonNode = <{ id: "startLesson", type: "action", name: "Start Lesson", actionKey: "startLesson" }>
+reviewLessonNode = <{ id: "reviewLesson", type: "action", name: "Review Lesson", actionKey: "reviewLesson" }>
+completeLessonNode = <{ id: "completeLesson", type: "action", name: "Complete Lesson", actionKey: "completeLesson" }>
 
 startLesson := @action {
   guard:
@@ -94,10 +94,28 @@ curriculum := @seed
 
 curriculumGraph = curriculum <> @project(format: "graph")
 
+curriculumDetail = curriculum <> @project {
+  format: "detail"
+  focus: studentNode
+  include: [id, label, type, state, meta, value, actions, relationships, status]
+}
+
 curriculumMenu = curriculum <> @project {
   format: "menu"
   focus: studentNode
   include: [id, label, action, target, status]
+}
+
+curriculumSummary = curriculum <> @project {
+  format: "summary"
+  focus: studentNode
+  include: [id, label, status, value, state, meta, actions, counts]
+}
+
+curriculumList = curriculum <> @project {
+  format: "list"
+  focus: studentNode
+  include: [id, label, type, status, value, state, meta]
 }
 
 curriculumTree = curriculum <> @project {
