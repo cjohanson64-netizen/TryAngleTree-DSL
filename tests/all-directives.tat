@@ -1,0 +1,409 @@
+// TAT v3 all-directives reference
+// Generic example using node1, node2, node3, edge1, edge2, graph1, graph2, etc.
+
+// -----------------------------------------------------------------------------
+// Top-level semantic bindings
+// -----------------------------------------------------------------------------
+
+node1 := <{
+  id: node1,
+  label: "Node 1",
+  kind: generic,
+  hp: 100,
+  class: exampleClass
+}>
+
+node2 := <{
+  id: node2,
+  label: "Node 2",
+  kind: generic,
+  hp: 50,
+  class: exampleClass
+}>
+
+node3 := <{
+  id: node3,
+  label: "Node 3",
+  kind: generic,
+  hp: 25,
+  class: exampleClass
+}>
+
+edge1 := { node1 : connectedTo : node2 }
+edge2 := { node2 :: node3 }
+edge3 := { node3 : connectedTo : node1 }
+
+// -----------------------------------------------------------------------------
+// @action(params)
+// Defines reusable semantic behavior.
+// -----------------------------------------------------------------------------
+
+action1 := @action(actor, target, amount) {
+  ?> @query(state) {
+    node: target,
+    key: hp,
+    value: > 0
+  }
+
+  -> @update(state) {
+    target.hp = @derive(target.hp + amount)
+  }
+
+  <> @project(target) {
+    format: custom,
+    include: [
+      target.hp,
+      target.class,
+      target.actions
+    ]
+  }
+}
+
+// -----------------------------------------------------------------------------
+// @project(params)
+// Defines reusable semantic projection constructor.
+// -----------------------------------------------------------------------------
+
+projection1 := @project(node) {
+  format: custom,
+  include: [
+    node.hp,
+    node.class,
+    node.actions
+  ]
+}
+
+// -----------------------------------------------------------------------------
+// @seed()
+// Initializes a graph instance.
+// -----------------------------------------------------------------------------
+
+graph1 := @seed() {
+  node: [
+    node1,
+    node2,
+    node3
+  ],
+
+  edge: [
+    edge1,
+    edge2,
+    edge3
+  ],
+
+  state: {
+    node1.hp: @derive(node1.hp + 0),
+    node2.hp: @compute(max(node2.hp, 1)),
+    node3.active: true
+  },
+
+  meta: {
+    node1.role: source,
+    node2.role: target,
+    node3.role: support
+  },
+
+  root: node1
+}
+
+graph2 := @seed() {
+  node: [
+    node2,
+    node3
+  ],
+
+  edge: [
+    { node2 : linkedTo : node3 }
+  ],
+
+  state: {
+    node2.ready: true,
+    node3.ready: false
+  },
+
+  meta: {
+    node2.group: secondary,
+    node3.group: secondary
+  },
+
+  root: node2
+}
+
+// -----------------------------------------------------------------------------
+// @query(domain)
+// Progressive semantic pattern matching / truth checking.
+// -----------------------------------------------------------------------------
+
+query1 := @query(node) {
+  id: node1,
+  kind: generic
+}
+
+query2 := @query(edge) {
+  from: node1,
+  relation: connectedTo,
+  to: node2
+}
+
+query3 := @query(state) {
+  node: node1,
+  key: hp,
+  value: >= @derive(node2.hp + 10)
+}
+
+query4 := @query(meta) {
+  node: node1,
+  key: role,
+  value: source
+}
+
+// -----------------------------------------------------------------------------
+// @derive(...)
+// Basic arithmetic / concatenation from semantic values.
+// -----------------------------------------------------------------------------
+
+derivedValue1 := @derive(node1.hp + 10)
+derivedValue2 := @derive(node1.label + " -> " + node2.label)
+
+// -----------------------------------------------------------------------------
+// @compute(...)
+// Utility/math-style computation.
+// -----------------------------------------------------------------------------
+
+computedValue1 := @compute(max(node1.hp, node2.hp))
+computedValue2 := @compute(clamp(@derive(node2.hp + 20), 0, node1.hp))
+
+// -----------------------------------------------------------------------------
+// @traverse(graph)
+// Bounded graph path discovery with guardrails.
+// -----------------------------------------------------------------------------
+
+traversal1 := @traverse(graph1) {
+  from: node1,
+  to: node3,
+  through: connectedTo,
+  depth: 3,
+  limit: 10,
+  rules: {
+    backtracking: false,
+    repeatNodes: false,
+    repeatEdges: false
+  },
+  return: all
+}
+
+// -----------------------------------------------------------------------------
+// @match(returnDomain)
+// Returns items of a domain that satisfy conditions in where.
+// -----------------------------------------------------------------------------
+
+matches1 := @match(node) {
+  where: {
+    state.hp: > 0,
+    meta.role: source
+  }
+}
+
+matches2 := @match(edge) {
+  where: {
+    relation: connectedTo,
+    from: node1
+  }
+}
+
+// -----------------------------------------------------------------------------
+// @repeat(times)
+// Repeats semantic flow. while is optional.
+// -----------------------------------------------------------------------------
+
+graph1
+  -> @repeat(3) {
+    while: @query(state) {
+      node: node2,
+      key: hp,
+      value: > 0
+    },
+
+    do: {
+      -> action1(node1, node2, 5)
+    }
+  }
+
+// -----------------------------------------------------------------------------
+// @when(eventName)
+// Event-triggered semantic flow.
+// -----------------------------------------------------------------------------
+
+@when(event1) {
+  if: @query(state) {
+    node: node2,
+    key: hp,
+    value: < 20
+  },
+
+  do: {
+    -> action1(node1, node2, 10)
+  }
+}
+
+// -----------------------------------------------------------------------------
+// @inject(hookRef, fileName)
+// Injects externally generated TAT flow into current graph pipeline.
+// -----------------------------------------------------------------------------
+
+graph1
+  <- @inject(hookRef1, "injection-file.py")
+
+// -----------------------------------------------------------------------------
+// @graft(domain)
+// Adds graph-local meaning. Conditions belong to flow gates, not graft body.
+// -----------------------------------------------------------------------------
+
+graph1
+  ?> @query(state) {
+    node: node1,
+    key: hp,
+    value: > 50
+  }
+
+  -> @graft(node) {
+    node4: <{
+      id: node4,
+      label: "Node 4",
+      kind: generic
+    }>,
+    node5: <{
+      id: node5,
+      label: "Node 5",
+      kind: generic
+    }>
+  }
+
+  -> @graft(edge) {
+    edge4: { node1 : connectedTo : node4 },
+    edge5: { node4 :: node5 }
+  }
+
+  -> @graft(state) {
+    node4.hp: 75,
+    node5.active: true
+  }
+
+  -> @graft(meta) {
+    node4.role: generated,
+    node5.role: generated
+  }
+
+// Graph grafting is singular and applied in mutation flow.
+
+graph1
+  -> @graft(graph) {
+    graph: graph2,
+    through: edge1
+  }
+
+// -----------------------------------------------------------------------------
+// @prune(domain)
+// Removes graph-local meaning. Conditions belong to flow gates.
+// -----------------------------------------------------------------------------
+
+graph1
+  ?> @query(state) {
+    node: node3,
+    key: active,
+    value: false
+  }
+
+  -> @prune(edge) {
+    relation: connectedTo
+  }
+
+  -> @prune(state) {
+    node3.active
+  }
+
+  -> @prune(meta) {
+    node3.role
+  }
+
+  -> @prune(node) {
+    node3
+  }
+
+// -----------------------------------------------------------------------------
+// @update(domain)
+// Changes existing meaning in a single domain.
+// -----------------------------------------------------------------------------
+
+graph1
+  !> @query(state) {
+    node: node1,
+    key: hp,
+    value: <= 0
+  }
+
+  -> @update(state) {
+    node1.hp = @derive(node1.hp - 10),
+    node2.hp = @compute(max(@derive(node2.hp - 5), 0))
+  }
+
+  -> @update(meta) {
+    node1.role = updatedSource,
+    node2.role = updatedTarget
+  }
+
+  -> @update(node) {
+    node1.label = @derive(node1.label + " Updated"),
+    node2.label = "Node 2 Updated"
+  }
+
+  -> @update(edge) {
+    edge1.relation = linkedTo
+  }
+
+// -----------------------------------------------------------------------------
+// Graph relationships
+// :: = implicit graph relationship
+// : context : = explicit contextual graph relationship
+// -----------------------------------------------------------------------------
+
+graph1 :: graph2 {
+  through: edge1,
+  condition: @query(edge) {
+    from: node1,
+    relation: connectedTo,
+    to: node2
+  }
+}
+
+graph1 : node1 : graph2 {
+  through: edge2,
+  condition: @query(state) {
+    node: node1,
+    key: hp,
+    value: > 0
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Projection flow
+// One @project() projection plus optional explanation projections.
+// -----------------------------------------------------------------------------
+
+result1 := graph1
+  -> action1(node1, node2, 10)
+
+  <> projection1(node2)
+  <> @who() {
+    include: [actor, target, affected]
+  }
+  <> @what() {
+    include: [actions, changes]
+  }
+  <> @why() {
+    include: [queries, gates, triggers]
+  }
+  <> @how() {
+    include: [flow, actions, mutations, injections, projections],
+    depth: full
+  }
